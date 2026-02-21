@@ -1,5 +1,6 @@
 package org.bm.app
 
+import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.app.*
 import android.content.ClipData
@@ -12,6 +13,7 @@ import android.os.*
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.*
+import android.view.accessibility.AccessibilityEvent
 import android.widget.ImageView
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
@@ -45,7 +47,6 @@ import androidx.core.content.getSystemService
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.lifecycleScope
@@ -66,6 +67,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
@@ -119,7 +121,11 @@ class FloatWindowDialog(context: Context) : Dialog(context), LifecycleOwner, Vie
     }
 }
 
-class FloatWindowService : LifecycleService() {
+class FloatWindowService : AccessibilityService(), LifecycleOwner {
+
+    // 手动管理生命周期（为了给协程 lifecycleScope 用）
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
 
     private var windowManager: WindowManager? = null
     private var floatDialog: FloatWindowDialog? = null
@@ -142,7 +148,17 @@ class FloatWindowService : LifecycleService() {
         private const val NOTIFICATION_ID = 1
     }
 
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // 这里可以监听到界面的变化、点击事件等，目前暂时留空
+    }
+
+    override fun onInterrupt() {
+        // 当无障碍服务被打断时触发
+        addLog("⚠️ 无障碍服务被打断")
+    }
+
     override fun onCreate() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         super.onCreate()
         // 创建前台服务通知通道
         createNotificationChannel()
@@ -158,15 +174,32 @@ class FloatWindowService : LifecycleService() {
         floatingDotView?.visibility = View.GONE
     }
 
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        showFloatWindow()
+        addLog("✅ 无障碍服务已连接并获取特权")
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (floatDialog?.isShowing == false && floatingDotView?.visibility != View.VISIBLE) {
+            showFloatWindow()
+        }
         super.onStartCommand(intent, flags, startId)
         return START_STICKY
     }
 
     override fun onDestroy() {
+        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        stopAutomation()
         hideFloatWindow()
         hideFloatingDot() // 确保销毁时隐藏圆点
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            stopForeground(true)
+        }
         super.onDestroy()
     }
 
@@ -247,10 +280,14 @@ class FloatWindowService : LifecycleService() {
     private fun exitApp() {
         // 停止自动化任务
         stopAutomation()
+        hideFloatWindow()
+        hideFloatingDot()
         stopSelf()
-        Handler(Looper.getMainLooper()).postDelayed({
-            System.exit(0)
-        }, 1000)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            stopForeground(true)
+        }
     }
 
     // 获取真实设备型号
@@ -475,6 +512,7 @@ class FloatWindowService : LifecycleService() {
         if (floatingDotView != null) return
         floatingDotView = object : ImageView(this) {
             override fun performClick(): Boolean {
+                super.performClick()
                 if (isAutomationRunning) {
                     stopAutomation() // 内部包含了 switchToPanel 的逻辑
                 } else {
@@ -634,6 +672,8 @@ class FloatWindowService : LifecycleService() {
                     addLog("执行自动化操作 ${it + 1}")
                     delay(1000)
                 }
+            } catch (e: CancellationException) {
+                addLog("✅ 任务正常取消")
             } catch (e: Exception) {
                 addLog("❌ 任务异常崩溃: ${e.message}")
             } finally {
@@ -680,7 +720,7 @@ class FloatWindowService : LifecycleService() {
         _logMessages.update { emptyList() }
     }
 
-    private fun addLog(message: String) {
+    fun addLog(message: String) {
         addLogSafe(message)
     }
 

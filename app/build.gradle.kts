@@ -79,4 +79,8 @@ dependencies {
     // 测试/调试依赖
     androidTestImplementation(platform(libs.androidx.compose.bom))
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // 网络请求 Retrofit + OkHttp
+    implementation(libs.retrofit.core)
+    implementation(libs.retrofit.gson)
+    implementation(libs.okhttp.logging)
 }

@@ -30,6 +30,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import androidx.compose.ui.graphics.Shadow
+import android.view.accessibility.AccessibilityManager
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.ComponentName
+import android.text.TextUtils
 
 class MainActivity : ComponentActivity() {
     private lateinit var overlayPermissionLauncher: ActivityResultLauncher<Intent>
@@ -49,6 +53,42 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun requestAccessibilityPermission() {
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun checkAccessibilityPermission(): Boolean {
+        val expectedComponentName = ComponentName(this, FloatWindowService::class.java)
+        val enabledServicesSetting = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        val colonSplitter = TextUtils.SimpleStringSplitter(':')
+        colonSplitter.setString(enabledServicesSetting)
+        while (colonSplitter.hasNext()) {
+            val componentNameString = colonSplitter.next()
+            val enabledComponent = ComponentName.unflattenFromString(componentNameString)
+            if (enabledComponent != null && enabledComponent == expectedComponentName) {
+                return true // 只要名单里有我们，绝对是开启了！
+            }
+        }
+        var isEnabled = false
+        val accessibilityManager = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledServices = accessibilityManager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_GENERIC)
+        for (service in enabledServices) {
+            if (service.resolveInfo.serviceInfo.packageName == packageName) {
+                isEnabled = true
+                break
+            }
+        }
+        return isEnabled
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -84,9 +124,17 @@ class MainActivity : ComponentActivity() {
     }
     
     private fun startFloatWindowService() {
+        if (!checkAccessibilityPermission()) {
+            requestAccessibilityPermission()
+            return // 跳转去授权，不往下执行
+        }
         val intent = Intent(this, FloatWindowService::class.java)
-        startForegroundService(intent)
-        finish() // 关闭主Activity
+        startService(intent)
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            addCategory(Intent.CATEGORY_HOME)
+        }
+        startActivity(homeIntent)
     }
 }
 

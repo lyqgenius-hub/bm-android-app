@@ -20,6 +20,9 @@ lifecycleService = "2.10.0"
 # 新增：SavedState 依赖版本（FloatWindowService 必须）
 savedstate = "1.2.1"
 
+retrofit = "2.9.0"
+okhttp = "4.12.0"
+
 [libraries]
 # 核心库
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -47,7 +50,10 @@ androidx-lifecycle-service = { group = "androidx.lifecycle", name = "lifecycle-s
 # 新增：SavedState 依赖（FloatWindowService 必须）
 androidx-savedstate = { group = "androidx.savedstate", name = "savedstate", version.ref = "savedstate" }
 androidx-savedstate-ktx = { group = "androidx.savedstate", name = "savedstate-ktx", version.ref = "savedstate" }
-
+# 网络请求库
+retrofit-core = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
+retrofit-gson = { group = "com.squareup.retrofit2", name = "converter-gson", version.ref = "retrofit" }
+okhttp-logging = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
