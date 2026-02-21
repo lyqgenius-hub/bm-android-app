@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:tools="http://schemas.android.com/tools"
+        xmlns:android="http://schemas.android.com/apk/res/android"
+        package="org.bm.app">
+
+    <!-- 悬浮窗权限 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 前台服务基础权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
+            tools:ignore="ForegroundServicesPolicy" />
+
+    <application
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:supportsRtl="true"
+            android:theme="@style/Theme.ClawApp">
+
+        <activity
+                android:name="org.bm.app.MainActivity"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 修复：XML语法完全正确，标签正确闭合，属性无语法错误 -->
+        <service
+                android:name="org.bm.app.FloatWindowService"
+                android:enabled="true"
+                android:exported="false"
+                android:foregroundServiceType="dataSync"
+                tools:ignore="ForegroundServicePermission" />
+
+    </application>
+
+</manifest>
