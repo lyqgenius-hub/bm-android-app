@@ -58,11 +58,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.jvm.java
+import androidx.compose.runtime.collectAsState
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withContext
 
 // 自定义Dialog类，实现所有三个必需的接口
 class FloatWindowDialog(context: Context) : Dialog(context), LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
@@ -119,14 +125,17 @@ class FloatWindowService : LifecycleService() {
     private var floatDialog: FloatWindowDialog? = null
     private var composeView: ComposeView? = null
     private var floatingDotView: ImageView? = null // 浮动圆点视图
-    private val logMessages = mutableStateListOf<String>()
-    private val logLock = Any()
+    private var isPanelShowing = true
+    private val _logMessages = MutableStateFlow<List<String>>(emptyList())
+    val logMessages: StateFlow<List<String>> = _logMessages.asStateFlow()
     private var isAutomationRunning by mutableStateOf(false)
     private var automationJob: Job? = null
     private var isMaximized by mutableStateOf(true) // 悬浮窗默认最大化
     private var lastClickTime = 0L
     private val CLICK_INTERVAL = 500L // 500ms内禁止重复点击
     private var isHandling = false    // 标记是否正在处理点击请求
+//    在开始自动化任务时获取 CPU 唤醒锁，保证 CPU 不休眠；任务结束或用户点击停止时释放
+    private var wakeLock: PowerManager.WakeLock? = null
 
     companion object {
         private const val CHANNEL_ID = "float_window_channel"
@@ -145,6 +154,8 @@ class FloatWindowService : LifecycleService() {
             return
         }
         showFloatWindow()
+        createFloatingDot()
+        floatingDotView?.visibility = View.GONE
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -155,8 +166,6 @@ class FloatWindowService : LifecycleService() {
     override fun onDestroy() {
         hideFloatWindow()
         hideFloatingDot() // 确保销毁时隐藏圆点
-        stopAutomation()
-        // 使用新的stopForeground API
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -216,14 +225,32 @@ class FloatWindowService : LifecycleService() {
         }
     }
 
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            // PARTIAL_WAKE_LOCK 保证 CPU 运转，即使屏幕关闭
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "BMApp::AutomationWakeLock"
+            )
+        }
+        wakeLock?.acquire(10 * 60 * 1000L /* 可选：设置最大超时时间，例如10分钟，防止死锁耗尽电量 */)
+    }
+
+    private fun releaseWakeLock() {
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
+    }
+
     // 结束整个应用
     private fun exitApp() {
         // 停止自动化任务
         stopAutomation()
-        // 停止服务
         stopSelf()
-        // 结束应用进程
-        System.exit(0)
+        Handler(Looper.getMainLooper()).postDelayed({
+            System.exit(0)
+        }, 1000)
     }
 
     // 获取真实设备型号
@@ -344,7 +371,7 @@ class FloatWindowService : LifecycleService() {
                     setContent {
                         MaterialTheme {
                             FloatWindowContent(
-                                logMessages = logMessages,
+                                logMessages = logMessages.collectAsState().value,
                                 isRunning = isAutomationRunning,
                                 isMaximized = isMaximized,
                                 onStart = { startAutomation() },
@@ -396,7 +423,7 @@ class FloatWindowService : LifecycleService() {
 
         try {
             floatDialog?.show()
-            if (logMessages.isEmpty()) {
+            if (_logMessages.value.isEmpty()) {
                 addLog("浮动窗口已显示")
                 addLog("设备型号: ${getDeviceModel()}")
                 addLog("设备名称: ${Build.PRODUCT}")
@@ -424,25 +451,34 @@ class FloatWindowService : LifecycleService() {
         }
     }
 
+    private fun switchToDot() {
+        isPanelShowing = false
+        // 隐藏主面板，显示悬浮球
+        floatDialog?.hide()
+        floatingDotView?.visibility = View.VISIBLE
+    }
+
+    private fun switchToPanel() {
+        isPanelShowing = true
+        // 隐藏悬浮球，显示主面板
+        floatingDotView?.visibility = View.GONE
+        floatDialog?.show()
+
+        // 强制将主面板层级提升到最前
+        floatDialog?.window?.let {
+            windowManager?.updateViewLayout(it.decorView, it.attributes)
+        }
+    }
+
     // 超小尺寸+透明背景+自定义文字色悬浮球
     private fun createFloatingDot() {
         if (floatingDotView != null) return
-        hideFloatWindow()
         floatingDotView = object : ImageView(this) {
             override fun performClick(): Boolean {
-                // 点击时的安全处理
-                if (!canClick()) return super.performClick()
-                isHandling = true
-                Handler(Looper.getMainLooper()).post {
-                    lifecycleScope.launch {
-                        // 先等一小段，避免 WindowManager 冲突
-                        delay(50)
-                        hideFloatingDot()
-                        composeView = null // 强制重建，解决不显示
-                        showFloatWindow()
-                        addLog("浮动圆点点击：恢复主窗口")
-                        isHandling = false
-                    }
+                if (isAutomationRunning) {
+                    stopAutomation() // 内部包含了 switchToPanel 的逻辑
+                } else {
+                    switchToPanel()
                 }
                 return true
             }
@@ -516,10 +552,12 @@ class FloatWindowService : LifecycleService() {
                         MotionEvent.ACTION_MOVE -> {
                             val dx = (event.rawX - downX).toInt()
                             val dy = (event.rawY - downY).toInt()
-                            params.x = startX + dx
-                            params.y = startY + dy
-                            window.updateViewLayout(v, params)
-                            isDragging = true
+                            if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                                params.x = startX + dx
+                                params.y = startY + dy
+                                window.updateViewLayout(v, params)
+                                isDragging = true
+                            }
                             return true
                         }
                         MotionEvent.ACTION_UP -> {
@@ -586,23 +624,26 @@ class FloatWindowService : LifecycleService() {
         isAutomationRunning = true
         addLog("自动化任务启动")
         isMaximized = true
-        // 隐藏完整浮动窗口，但显示浮动圆点
-        hideFloatWindow()
-        createFloatingDot()
-
+        switchToDot()
+        acquireWakeLock()
+        isHandling = false
         automationJob = CoroutineScope(Dispatchers.IO).launch {
-            // 模拟自动化操作
-            repeat(10) {
-                addLog("执行自动化操作 ${it + 1}")
-                delay(1000)
-            }
-            addLog("自动化任务完成")
-            isAutomationRunning = false
-            lifecycleScope.launch {
-                delay(50)
-                hideFloatingDot()
-                showFloatWindow()
-                isHandling = false
+            try {
+                // 模拟自动化操作
+                repeat(10) {
+                    addLog("执行自动化操作 ${it + 1}")
+                    delay(1000)
+                }
+            } catch (e: Exception) {
+                addLog("❌ 任务异常崩溃: ${e.message}")
+            } finally {
+                withContext(NonCancellable +Dispatchers.Main) {
+                    isAutomationRunning = false
+                    isHandling = false
+                    switchToPanel()
+                    releaseWakeLock()
+                    addLog("自动化任务完成")
+                }
             }
         }
     }
@@ -617,34 +658,26 @@ class FloatWindowService : LifecycleService() {
         isAutomationRunning = false
         addLog("自动化任务停止")
         isMaximized = true
+        releaseWakeLock()
         lifecycleScope.launch {
             delay(50)
-            hideFloatingDot()
-            showFloatWindow()
+            switchToPanel()
             isHandling = false
         }
     }
 
     private fun addLogSafe(message: String) {
-        Handler(Looper.getMainLooper()).post {
-            synchronized(logLock) { // 加锁保证主线程内的操作原子性
-                val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-                val logMessage = "[$time] $message"
-                logMessages.add(logMessage)
-                if (logMessages.size > 500) {
-                    logMessages.removeAt(0)
-                }
-            }
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        val newLog = "[$time] $message"
+        // .update 是线程安全的，它会自动获取当前列表并生成新列表
+        _logMessages.update { currentList ->
+            // 将新日志加入列表，并只保留最新的 500 条防止 OOM
+            (currentList + newLog).takeLast(500)
         }
     }
 
     private fun clearLogSafe() {
-        Handler(Looper.getMainLooper()).post {
-            synchronized(logLock) {
-                logMessages.clear()
-                addLogSafe("日志已清空") // 调用安全方法
-            }
-        }
+        _logMessages.update { emptyList() }
     }
 
     private fun addLog(message: String) {
@@ -656,12 +689,35 @@ class FloatWindowService : LifecycleService() {
     }
 
     private fun copyLog() {
-        val logText = logMessages.joinToString("\n")
+        val logText = logMessages.value.joinToString("\n")
         // 复制到剪贴板
         val clipboard = getSystemService<ClipboardManager>()
         val clip = ClipData.newPlainText("自动化日志", logText)
         clipboard?.setPrimaryClip(clip)
         addLog("日志已复制到剪贴板")
+    }
+}
+
+@Composable
+fun ActionIconButton(
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    containerColor: Color
+) {
+    FloatingActionButton(
+        onClick = onClick,
+        modifier = Modifier.size(32.dp),
+        containerColor = containerColor,
+        shape = RoundedCornerShape(18.dp),
+        elevation = FloatingActionButtonDefaults.elevation(3.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = Color.White,
+            modifier = Modifier.size(20.dp)
+        )
     }
 }
 
@@ -838,102 +894,42 @@ fun FloatWindowContent(
                 }
             }
         }
-
         // 底部按钮区 - 全部使用图标按钮，排列成一行
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(4.dp), // 减少内边距
+            modifier = Modifier.fillMaxWidth().padding(4.dp), // 减少内边距
             horizontalArrangement = Arrangement.SpaceEvenly, // 均匀分布
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 启动按钮 - 使用播放图标
-            FloatingActionButton(
-                onClick = {
-                    if (!isRunning) {
-                        onStart()
-                    }
-                },
-                modifier = Modifier.size(32.dp),
-                containerColor = Color(0xFF2196F3),
-                shape = RoundedCornerShape(18.dp),
-                elevation = FloatingActionButtonDefaults.elevation(3.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = "启动",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // 停止按钮 - 使用停止图标
-            FloatingActionButton(
-                onClick = {
-                    if (isRunning) {
-                        onStop()
-                    }
-                },
-                modifier = Modifier.size(32.dp),
-                containerColor = Color(0xFFF44336),
-                shape = RoundedCornerShape(18.dp),
-                elevation = FloatingActionButtonDefaults.elevation(3.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Stop,
-                    contentDescription = "停止",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // 清空日志按钮 - 使用清空图标
-            FloatingActionButton(
+            ActionIconButton(
+                onClick = { if (!isRunning) onStart() },
+                icon = Icons.Default.PlayArrow,
+                contentDescription = "启动",
+                containerColor = Color(0xFF2196F3)
+            )
+            ActionIconButton(
+                onClick = { if (isRunning) onStop() },
+                icon = Icons.Default.Stop,
+                contentDescription = "停止",
+                containerColor = Color(0xFFF44336)
+            )
+            ActionIconButton(
                 onClick = onClearLog,
-                modifier = Modifier.size(32.dp),
-                containerColor = Color(0xFFFF9800),
-                shape = RoundedCornerShape(18.dp),
-                elevation = FloatingActionButtonDefaults.elevation(3.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Clear,
-                    contentDescription = "清空日志",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // 复制日志按钮 - 使用复制图标
-            FloatingActionButton(
+                icon = Icons.Default.Clear,
+                contentDescription = "清空日志",
+                containerColor = Color(0xFFFF9800)
+            )
+            ActionIconButton(
                 onClick = onCopyLog,
-                modifier = Modifier.size(32.dp),
-                containerColor = Color(0xFF4CAF50),
-                shape = RoundedCornerShape(18.dp),
-                elevation = FloatingActionButtonDefaults.elevation(3.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CopyAll,
-                    contentDescription = "复制日志",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            // 关闭按钮 - 使用关闭图标
-            FloatingActionButton(
+                icon = Icons.Default.CopyAll,
+                contentDescription = "复制日志",
+                containerColor = Color(0xFF4CAF50)
+            )
+            ActionIconButton(
                 onClick = onClose,
-                modifier = Modifier.size(32.dp),
-                containerColor = Color(0xFF9E9E9E),
-                shape = RoundedCornerShape(18.dp),
-                elevation = FloatingActionButtonDefaults.elevation(3.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Clear,
-                    contentDescription = "关闭应用",
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+                icon = Icons.Default.Clear,
+                contentDescription = "关闭应用",
+                containerColor = Color(0xFF9E9E9E)
+            )
         }
     }
 }

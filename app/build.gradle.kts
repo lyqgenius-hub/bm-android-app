@@ -63,7 +63,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     // Lifecycle 相关
-    implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation("androidx.lifecycle:lifecycle-viewmodel:2.10.0")
     implementation(libs.androidx.lifecycle.service)
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")

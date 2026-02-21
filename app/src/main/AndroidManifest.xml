@@ -6,8 +6,15 @@
     <!-- 悬浮窗权限 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- 前台服务基础权限 -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
-            tools:ignore="ForegroundServicesPolicy" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
             android:icon="@mipmap/ic_launcher"
@@ -25,13 +32,17 @@
             </intent-filter>
         </activity>
 
-        <!-- 修复：XML语法完全正确，标签正确闭合，属性无语法错误 -->
         <service
                 android:name="org.bm.app.FloatWindowService"
                 android:enabled="true"
                 android:exported="false"
-                android:foregroundServiceType="dataSync"
-                tools:ignore="ForegroundServicePermission" />
+                android:foregroundServiceType="specialUse"
+                tools:ignore="ForegroundServicePermission">
+
+            <property
+                    android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                    android:value="Automation script execution and overlay UI" />
+        </service>
 
     </application>
 
