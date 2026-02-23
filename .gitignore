@@ -1,15 +1,21 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+# ========================== 核心忽略目录（编译产物/IDE缓存）==========================
+build/
+.gradle/
+.idea/
+.cxx/
+.externalNativeBuild/
+captures/
+out/
+.kotlin/
+
+# ========================== 明确的本地配置文件（每个开发者环境不同）==========================
 local.properties
+.DS_Store
+gradle-app.setting
+
+# ========================== 保留Gradle Wrapper核心文件（团队协作必需）==========================
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# ========================== 自定义忽略目录（你指定的）==========================
+.trae/
